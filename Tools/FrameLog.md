@@ -25,10 +25,12 @@ Optional `SyncData` (from local `PlayerFrameData` when present):
 
 `sync_locX`, `sync_locY`, `sync_anim`, `sync_percent`, `sync_stocks`, `sync_facing`
 
-## Event types
+## `type` values
 
 - `pad` — after `storeLocalInputs` (`local`, `playerIdx`, `buttons`)
 - `advance` — `handleFrameAdvanceRequest` (`frames_to_advance`)
 - `sync` — end of `updateSync` (join keys above)
+
+JSON discriminator field is `type` (not `event`).
 
 Does **not** rewrite Rollback's harness; emit matching keys from the C++ EXI path only.
