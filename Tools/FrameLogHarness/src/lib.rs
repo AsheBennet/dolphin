@@ -50,6 +50,18 @@ pub struct NdjsonSync {
     pub rb_stop: Option<u32>,
     pub checksum: i64,
     pub frames_to_advance: Option<u32>,
+    pub sync_percent: Option<f32>,
+    pub sync_stocks: Option<u8>,
+    pub sync_loc_x: Option<f32>,
+    pub sync_loc_y: Option<f32>,
+    pub sync_anim: Option<u32>,
+    pub sync_facing: Option<i8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DesyncDiverge {
+    pub local: u32,
+    pub reasons: Vec<&'static str>,
 }
 
 /// Minimal NDJSON parse for Bridge `type=sync` lines (join keys only).
@@ -77,7 +89,53 @@ fn parse_sync_line(line: &str) -> Result<NdjsonSync, String> {
         rb_stop: json_opt_u32(line, "rb_stop")?,
         checksum: json_i64(line, "checksum")?,
         frames_to_advance: json_opt_u32(line, "frames_to_advance").ok().flatten(),
+        sync_percent: json_opt_f32(line, "sync_percent").ok().flatten(),
+        sync_stocks: json_opt_u8(line, "sync_stocks").ok().flatten(),
+        sync_loc_x: json_opt_f32(line, "sync_locX").ok().flatten(),
+        sync_loc_y: json_opt_f32(line, "sync_locY").ok().flatten(),
+        sync_anim: json_opt_u32(line, "sync_anim").ok().flatten(),
+        sync_facing: json_opt_i8(line, "sync_facing").ok().flatten(),
     })
+}
+
+/// Compare two peers' `type=sync` streams by `local` frame. Returns first diverge.
+pub fn first_desync(a: &[NdjsonSync], b: &[NdjsonSync]) -> Option<DesyncDiverge> {
+    use std::collections::BTreeMap;
+    let map_b: BTreeMap<u32, &NdjsonSync> = b.iter().map(|s| (s.local, s)).collect();
+    for sa in a {
+        let Some(sb) = map_b.get(&sa.local) else {
+            continue;
+        };
+        let mut reasons = Vec::new();
+        if sa.checksum != sb.checksum {
+            reasons.push("checksum");
+        }
+        if sa.sync_percent != sb.sync_percent {
+            reasons.push("sync_percent");
+        }
+        if sa.sync_stocks != sb.sync_stocks {
+            reasons.push("sync_stocks");
+        }
+        if sa.sync_loc_x != sb.sync_loc_x {
+            reasons.push("sync_locX");
+        }
+        if sa.sync_loc_y != sb.sync_loc_y {
+            reasons.push("sync_locY");
+        }
+        if sa.sync_anim != sb.sync_anim {
+            reasons.push("sync_anim");
+        }
+        if sa.sync_facing != sb.sync_facing {
+            reasons.push("sync_facing");
+        }
+        if !reasons.is_empty() {
+            return Some(DesyncDiverge {
+                local: sa.local,
+                reasons,
+            });
+        }
+    }
+    None
 }
 
 fn json_u32(line: &str, key: &str) -> Result<u32, String> {
@@ -111,11 +169,41 @@ fn json_opt_u32(line: &str, key: &str) -> Result<Option<u32>, String> {
     ))
 }
 
+fn json_opt_f32(line: &str, key: &str) -> Result<Option<f32>, String> {
+    let v = json_raw(line, key)?;
+    if v == "null" {
+        return Ok(None);
+    }
+    Ok(Some(
+        v.parse::<f32>()
+            .map_err(|_| format!("bad opt f32 for {key}: {v}"))?,
+    ))
+}
+
+fn json_opt_u8(line: &str, key: &str) -> Result<Option<u8>, String> {
+    let v = json_raw(line, key)?;
+    if v == "null" {
+        return Ok(None);
+    }
+    Ok(Some(
+        v.parse::<u8>()
+            .map_err(|_| format!("bad opt u8 for {key}: {v}"))?,
+    ))
+}
+
+fn json_opt_i8(line: &str, key: &str) -> Result<Option<i8>, String> {
+    let v = json_raw(line, key)?;
+    if v == "null" {
+        return Ok(None);
+    }
+    Ok(Some(
+        v.parse::<i8>()
+            .map_err(|_| format!("bad opt i8 for {key}: {v}"))?,
+    ))
+}
+
 fn json_raw(line: &str, key: &str) -> Result<String, String> {
-    let patterns = [
-        format!("\"{key}\":"),
-        format!("\"{key}\": "),
-    ];
+    let patterns = [format!("\"{key}\":"), format!("\"{key}\": ")];
     let mut start = None;
     for p in &patterns {
         if let Some(i) = line.find(p) {
@@ -124,8 +212,7 @@ fn json_raw(line: &str, key: &str) -> Result<String, String> {
         }
     }
     let start = start.ok_or_else(|| format!("missing key {key}"))?;
-    let rest = &line[start..];
-    let rest = rest.trim_start();
+    let rest = line[start..].trim_start();
     if rest.starts_with('"') {
         let end = rest[1..]
             .find('"')
@@ -392,5 +479,36 @@ mod tests {
         assert_eq!(miss.frames_to_advance, Some(4));
         assert_eq!(miss.checksum, 291);
         assert!(miss.predicting);
+    }
+
+    #[test]
+    fn dual_fixture_reports_first_checksum_diverge() {
+        let a = fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/peer_a.ndjson"
+        ))
+        .expect("peer_a");
+        let b = fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/peer_b.ndjson"
+        ))
+        .expect("peer_b");
+        let sa = parse_sync_events(&a).expect("parse a");
+        let sb = parse_sync_events(&b).expect("parse b");
+        let d = first_desync(&sa, &sb).expect("should diverge");
+        assert_eq!(d.local, 161);
+        assert!(d.reasons.contains(&"checksum"));
+        assert!(d.reasons.contains(&"sync_stocks"));
+    }
+
+    #[test]
+    fn dual_fixture_identical_logs_no_desync() {
+        let a = fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/fixtures/peer_a.ndjson"
+        ))
+        .expect("peer_a");
+        let sa = parse_sync_events(&a).expect("parse a");
+        assert!(first_desync(&sa, &sa).is_none());
     }
 }
