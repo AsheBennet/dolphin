@@ -12,8 +12,10 @@
 #include <OptionParser.h>
 
 #include "Common/Config/Config.h"
+#include "Common/Logging/Log.h"
 #include "Common/StringUtil.h"
 #include "Common/Version.h"
+#include "Core/Brawlback/BridgeLaunchArgs.h"
 #include "Core/Config/MainSettings.h"
 
 namespace CommandLineParse
@@ -125,7 +127,49 @@ std::unique_ptr<optparse::OptionParser> CreateParser(ParserOptions options)
       .choices({"HLE", "LLE"})
       .help("Choose audio emulation from [%choices]");
 
+  // Bridge / Dock match-launch argv (see Tools/MatchLaunchArgs.md)
+  parser->add_option("--bb-match-id")
+      .dest("bb_match_id")
+      .action("store")
+      .type("string")
+      .help("Bridge match id (string)");
+  parser->add_option("--bb-seed")
+      .dest("bb_seed")
+      .action("store")
+      .type("string")
+      .help("Bridge RNG seed (int64 decimal string)");
+  parser->add_option("--bb-local-idx")
+      .dest("bb_local_idx")
+      .action("store")
+      .type("string")
+      .help("Bridge local player index (int)");
+  parser->add_option("--bb-endpoints")
+      .dest("bb_endpoints")
+      .action("store")
+      .type("string")
+      .help("Bridge peer endpoints JSON [{playerId,host,port},...]");
+
   return parser;
+}
+
+
+static void ApplyBridgeLaunchArgs(const optparse::Values& options)
+{
+  auto opt_str = [&](const char* key) -> std::optional<std::string> {
+    if (!options.is_set_by_user(key))
+      return std::nullopt;
+    const char* v = static_cast<const char*>(options.get(key));
+    if (!v)
+      return std::nullopt;
+    return std::string(v);
+  };
+
+  std::string error;
+  if (!BridgeLaunchArgs::SetFromCli(opt_str("bb_match_id"), opt_str("bb_seed"),
+                                    opt_str("bb_local_idx"), opt_str("bb_endpoints"), &error))
+  {
+    ERROR_LOG_FMT(BRAWLBACK, "Failed to parse Bridge --bb-* argv: {}", error);
+  }
 }
 
 static void AddConfigLayer(const optparse::Values& options)
@@ -144,6 +188,7 @@ optparse::Values& ParseArguments(optparse::OptionParser* parser, int argc, char*
 {
   optparse::Values& options = parser->parse_args(argc, argv);
   AddConfigLayer(options);
+  ApplyBridgeLaunchArgs(options);
   return options;
 }
 
@@ -152,6 +197,7 @@ optparse::Values& ParseArguments(optparse::OptionParser* parser,
 {
   optparse::Values& options = parser->parse_args(arguments);
   AddConfigLayer(options);
+  ApplyBridgeLaunchArgs(options);
   return options;
 }
 }  // namespace CommandLineParse
