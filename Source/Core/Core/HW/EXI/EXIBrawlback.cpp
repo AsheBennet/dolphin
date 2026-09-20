@@ -1,6 +1,7 @@
 
 
 #include "EXIBrawlback.h"
+#include "Core/Brawlback/FrameLog.h"
 #include <Core/Brawlback/include/brawlback-common/ExiStructures.h>
 #include <algorithm>
 #include <chrono>
@@ -343,6 +344,7 @@ void CEXIBrawlback::updateSync(bu32& locFrame, bu8 playerIdx)
   }
 
   // remote inputs match predicted inputs or not predicting
+  bool did_rollback = false;
   if (isSynchronized)
   {
     this->latestConfirmedFrame = finalFrame;
@@ -361,9 +363,25 @@ void CEXIBrawlback::updateSync(bu32& locFrame, bu8 playerIdx)
     this->stopRollbackFrame = locFrame;
     locFrame = this->latestConfirmedFrame;
     this->startRollbackFrame = locFrame;
+    did_rollback = true;
   }
 
   // INFO_LOG_FMT(BRAWLBACK, "UpdateSync latestConfirmedFrame = %i\n", latestConfirmedFrame);
+
+  // Bridge NDJSON join line (keys match Tools/FrameLogHarness).
+  const SyncData* sync_ptr = nullptr;
+  SyncData sync_copy{};
+  if (const PlayerFrameData* local_pfd =
+          findInPlayerFrameDataQueue(this->localPlayerFrameData, locFrame))
+  {
+    sync_copy = local_pfd->syncData;
+    sync_ptr = &sync_copy;
+  }
+  // IncrementalRB SaveState path does not yet expose a checksum; emit -1 until available.
+  constexpr s32 kChecksumUnavailable = -1;
+  FrameLog::EmitSync(locFrame, this->latestConfirmedFrame, this->isPredicting, did_rollback,
+                     this->startRollbackFrame, this->stopRollbackFrame, kChecksumUnavailable,
+                     sync_ptr);
 }
 bool CEXIBrawlback::shouldRollback(bu32 locFrame)
 {
@@ -453,6 +471,7 @@ void CEXIBrawlback::handleFrameAdvanceRequest(u8* data)
   this->read_queue.clear();
   auto dataPtr = reinterpret_cast<u8*>(&this->framesToAdvance);
   this->read_queue.insert(this->read_queue.end(), dataPtr, dataPtr + sizeof(bu32));
+  FrameLog::EmitAdvance(this->framesToAdvance);
 }
 
 void CEXIBrawlback::storeLocalInputs(PlayerFrameData* localPlayerFramedata)
@@ -490,6 +509,7 @@ void CEXIBrawlback::storeLocalInputs(PlayerFrameData* localPlayerFramedata)
       this->localPlayerFrameData.pop_front();
     }
     INFO_LOG_FMT(BRAWLBACK, "PUSHING PFD FOR FRAME {}\n", pFD->frame);
+    FrameLog::EmitPad(pFD->frame, pFD->playerIdx, pFD->pad.buttons);
     this->localPlayerFrameData.push_back(std::move(pFD));
   }
   else
