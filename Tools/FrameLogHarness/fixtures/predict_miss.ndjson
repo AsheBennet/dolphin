@@ -1,0 +1,6 @@
+{"type":"pad","local":155,"playerIdx":0,"buttons":0}
+{"type":"advance","local":156,"frames_to_advance":1}
+{"type":"sync","local":156,"confirmed":155,"predicting":true,"rb_start":null,"rb_stop":null,"checksum":-1,"sync_percent":0.0,"sync_stocks":4}
+{"type":"pad","local":156,"playerIdx":0,"buttons":0}
+{"type":"advance","local":158,"frames_to_advance":1}
+{"type":"sync","local":155,"confirmed":155,"predicting":true,"rb_start":155,"rb_stop":158,"checksum":291,"sync_percent":12.5,"sync_stocks":3,"frames_to_advance":4}
