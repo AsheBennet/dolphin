@@ -380,6 +380,7 @@ void CEXIBrawlback::updateSync(bu32& locFrame, bu8 playerIdx)
   }
   // IncrementalRB SaveState path does not yet expose a checksum; emit -1 until available.
   constexpr s32 kChecksumUnavailable = -1;
+  this->localFrame = locFrame;
   FrameLog::EmitSync(locFrame, this->latestConfirmedFrame, this->isPredicting, did_rollback,
                      this->startRollbackFrame, this->stopRollbackFrame, kChecksumUnavailable,
                      sync_ptr);
@@ -472,7 +473,7 @@ void CEXIBrawlback::handleFrameAdvanceRequest(u8* data)
   this->read_queue.clear();
   auto dataPtr = reinterpret_cast<u8*>(&this->framesToAdvance);
   this->read_queue.insert(this->read_queue.end(), dataPtr, dataPtr + sizeof(bu32));
-  FrameLog::EmitAdvance(this->framesToAdvance);
+  FrameLog::EmitAdvance(this->localFrame, this->framesToAdvance);
 }
 
 void CEXIBrawlback::storeLocalInputs(PlayerFrameData* localPlayerFramedata)
@@ -1016,7 +1017,7 @@ void CEXIBrawlback::MatchmakingThreadFunc()
   INFO_LOG_FMT(BRAWLBACK, "~~~~~~~~~~~~~~ END MATCHMAKING PHASE 2 THREAD ~~~~~~~~~~~~~~\n");
 }
 
-void CEXIBrawlback::connectViaBridge()
+bool CEXIBrawlback::connectViaBridge()
 {
   const auto& args = BridgeLaunchArgs::Get();
   this->localPlayerIdx = args.local_player_idx;
@@ -1027,7 +1028,13 @@ void CEXIBrawlback::connectViaBridge()
   {
     ERROR_LOG_FMT(BRAWLBACK, "Bridge connect: missing local endpoint for idx {}\n",
                   args.local_player_idx);
-    return;
+    return false;
+  }
+  if (local->port == 0)
+  {
+    ERROR_LOG_FMT(BRAWLBACK, "Bridge connect: local endpoint missing port (idx={})\n",
+                  args.local_player_idx);
+    return false;
   }
 
   INFO_LOG_FMT(BRAWLBACK,
@@ -1041,12 +1048,18 @@ void CEXIBrawlback::connectViaBridge()
   if (this->server == nullptr)
   {
     ERROR_LOG_FMT(BRAWLBACK, "Bridge connect: enet_host_create failed on port {}\n", local->port);
-    return;
+    return false;
   }
 
   bool connectedToAtLeastOne = false;
   for (const auto& remote : BridgeLaunchArgs::RemoteEndpoints())
   {
+    if (remote.port == 0)
+    {
+      ERROR_LOG_FMT(BRAWLBACK, "Bridge connect: remote endpoint missing port (playerId={})\n",
+                   remote.player_id);
+      continue;
+    }
     ENetAddress remote_addr;
     int set_host_res = enet_address_set_host(&remote_addr, remote.host.c_str());
     if (set_host_res < 0)
@@ -1076,11 +1089,14 @@ void CEXIBrawlback::connectViaBridge()
   if (!connectedToAtLeastOne)
   {
     ERROR_LOG_FMT(BRAWLBACK, "Bridge connect: no remote peers to connect to\n");
-    return;
+    enet_host_destroy(this->server);
+    this->server = nullptr;
+    return false;
   }
 
   this->server->mtu = std::min(this->server->mtu, NetPlay::MAX_ENET_MTU);
   this->netplay_thread = std::thread(&CEXIBrawlback::NetplayThreadFunc, this);
+  return true;
 }
 
 void CEXIBrawlback::connectToOpponent()
@@ -1141,10 +1157,15 @@ void CEXIBrawlback::handleFindMatch(u8* payload)
   // if (!payload) return;
 
   // Bridge Dock argv: skip Lylat matchmaking; connect using --bb-endpoints.
+  // Fail closed: if IsActive() but connect fails, do not fall back to Lylat.
   if (BridgeLaunchArgs::IsActive())
   {
     INFO_LOG_FMT(BRAWLBACK, "Bridge --bb-* present; bypassing Lylat matchmaking\n");
-    this->connectViaBridge();
+    if (!this->connectViaBridge())
+    {
+      ERROR_LOG_FMT(BRAWLBACK,
+                    "Bridge connect failed; not falling back to Lylat matchmaking\n");
+    }
     return;
   }
 

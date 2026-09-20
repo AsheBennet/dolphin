@@ -28,7 +28,7 @@ Optional `SyncData` (from local `PlayerFrameData` when present):
 ## `type` values
 
 - `pad` — after `storeLocalInputs` (`local`, `playerIdx`, `buttons`)
-- `advance` — `handleFrameAdvanceRequest` (`frames_to_advance`)
+- `advance` — `handleFrameAdvanceRequest` (`local`, `frames_to_advance`)
 - `sync` — end of `updateSync` (join keys above)
 
 JSON discriminator field is `type` (not `event`).

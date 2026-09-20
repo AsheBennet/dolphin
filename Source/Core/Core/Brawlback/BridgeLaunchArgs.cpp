@@ -62,10 +62,10 @@ bool ParseEndpointsJson(const std::string& json, std::vector<Endpoint>* out, std
         *error = "endpoint requires playerId (string), host (string), port (number)";
       return false;
     }
-    if (*port < 0 || *port > 65535)
+    if (*port < 1 || *port > 65535)
     {
       if (error)
-        *error = "endpoint port out of range";
+        *error = "endpoint port missing or out of range (expected 1-65535)";
       return false;
     }
     ep.player_id = std::move(*player_id);
@@ -141,6 +141,13 @@ bool SetFromCli(const std::optional<std::string>& match_id, const std::optional<
   {
     if (error)
       *error = "invalid --bb-endpoints: " + ep_err;
+    return false;
+  }
+
+  if (args.endpoints.empty())
+  {
+    if (error)
+      *error = "--bb-endpoints must be a non-empty array";
     return false;
   }
 

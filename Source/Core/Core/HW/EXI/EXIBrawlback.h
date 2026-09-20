@@ -101,7 +101,8 @@ private:
   // --- Matchmaking
   void connectToOpponent();
   // Bridge --bb-* argv: skip Lylat, listen on local endpoint, connect to peers.
-  void connectViaBridge();
+  // Returns false on failure (caller must not fall back to Lylat while IsActive()).
+  bool connectViaBridge();
   void MatchmakingThreadFunc();
   Brawlback::UserInfo getUserInfo();
   Matchmaking::MatchSearchSettings lastSearch;

@@ -69,9 +69,10 @@ inline void EmitPad(u32 frame, u8 player_idx, u32 buttons)
 }
 
 // Frame-advance reply (handleFrameAdvanceRequest).
-inline void EmitAdvance(u32 frames_to_advance)
+inline void EmitAdvance(u32 local, u32 frames_to_advance)
 {
-  AppendLine(fmt::format(R"({{"type":"advance","frames_to_advance":{}}})", frames_to_advance));
+  AppendLine(fmt::format(R"({{"type":"advance","local":{},"frames_to_advance":{}}})", local,
+                         frames_to_advance));
 }
 
 // Join line after updateSync (optional SyncData + checksum when available).
