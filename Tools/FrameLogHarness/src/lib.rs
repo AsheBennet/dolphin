@@ -1,6 +1,6 @@
 //! Standalone model of Brawlback's GGPO-shaped updateSync / shouldRollback /
 //! getRemoteInputs predict path (AsheBennet/dolphin savestates-efficiency-v2).
-//! Not a full emulator — proves decision + frame-log shape until we can PR in-tree.
+//! Also parses Bridge `brawlback_frame_log.ndjson` fixtures (no ISO).
 
 pub const MAX_ROLLBACK_FRAMES: u32 = 5;
 pub const FRAME_DELAY: u32 = 1;
@@ -39,6 +39,104 @@ pub struct FrameLogEntry {
     pub rollback_stop: Option<u32>,
     pub frames_to_advance: u32,
     pub sync_checksum: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NdjsonSync {
+    pub local: u32,
+    pub confirmed: u32,
+    pub predicting: bool,
+    pub rb_start: Option<u32>,
+    pub rb_stop: Option<u32>,
+    pub checksum: i64,
+    pub frames_to_advance: Option<u32>,
+}
+
+/// Minimal NDJSON parse for Bridge `type=sync` lines (join keys only).
+pub fn parse_sync_events(ndjson: &str) -> Result<Vec<NdjsonSync>, String> {
+    let mut out = Vec::new();
+    for (lineno, line) in ndjson.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if !line.contains("\"type\":\"sync\"") && !line.contains("\"type\": \"sync\"") {
+            continue;
+        }
+        out.push(parse_sync_line(line).map_err(|e| format!("line {}: {}", lineno + 1, e))?);
+    }
+    Ok(out)
+}
+
+fn parse_sync_line(line: &str) -> Result<NdjsonSync, String> {
+    Ok(NdjsonSync {
+        local: json_u32(line, "local")?,
+        confirmed: json_u32(line, "confirmed")?,
+        predicting: json_bool(line, "predicting")?,
+        rb_start: json_opt_u32(line, "rb_start")?,
+        rb_stop: json_opt_u32(line, "rb_stop")?,
+        checksum: json_i64(line, "checksum")?,
+        frames_to_advance: json_opt_u32(line, "frames_to_advance").ok().flatten(),
+    })
+}
+
+fn json_u32(line: &str, key: &str) -> Result<u32, String> {
+    let v = json_raw(line, key)?;
+    v.parse::<u32>()
+        .map_err(|_| format!("bad u32 for {key}: {v}"))
+}
+
+fn json_i64(line: &str, key: &str) -> Result<i64, String> {
+    let v = json_raw(line, key)?;
+    v.parse::<i64>()
+        .map_err(|_| format!("bad i64 for {key}: {v}"))
+}
+
+fn json_bool(line: &str, key: &str) -> Result<bool, String> {
+    match json_raw(line, key)?.as_str() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        other => Err(format!("bad bool for {key}: {other}")),
+    }
+}
+
+fn json_opt_u32(line: &str, key: &str) -> Result<Option<u32>, String> {
+    let v = json_raw(line, key)?;
+    if v == "null" {
+        return Ok(None);
+    }
+    Ok(Some(
+        v.parse::<u32>()
+            .map_err(|_| format!("bad opt u32 for {key}: {v}"))?,
+    ))
+}
+
+fn json_raw(line: &str, key: &str) -> Result<String, String> {
+    let patterns = [
+        format!("\"{key}\":"),
+        format!("\"{key}\": "),
+    ];
+    let mut start = None;
+    for p in &patterns {
+        if let Some(i) = line.find(p) {
+            start = Some(i + p.len());
+            break;
+        }
+    }
+    let start = start.ok_or_else(|| format!("missing key {key}"))?;
+    let rest = &line[start..];
+    let rest = rest.trim_start();
+    if rest.starts_with('"') {
+        let end = rest[1..]
+            .find('"')
+            .ok_or_else(|| format!("unclosed string for {key}"))?
+            + 1;
+        return Ok(rest[1..end].to_string());
+    }
+    let end = rest
+        .find(|c: char| c == ',' || c == '}')
+        .unwrap_or(rest.len());
+    Ok(rest[..end].trim().to_string())
 }
 
 #[derive(Debug)]
@@ -104,7 +202,6 @@ impl Session {
         loc_frame > GAME_FULL_START_FRAME && count >= MAX_ROLLBACK_FRAMES
     }
 
-    /// Mirror getRemoteInputs predict branch.
     pub fn remote_inputs_for(&mut self, loc_frame: u32, player_idx: u8) -> PlayerFrame {
         if !self.in_rollback_mode(loc_frame, player_idx) {
             self.is_predicting = false;
@@ -138,7 +235,6 @@ impl Session {
         }
     }
 
-    /// Mirror updateSync: on predict-miss, rollback range + frames_to_advance.
     pub fn update_sync(&mut self, loc_frame: &mut u32, player_idx: u8, sync_checksum: u32) {
         let remote_frame = self.latest_remote(player_idx);
         let final_frame = remote_frame.min(*loc_frame);
@@ -190,6 +286,7 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     fn pad(buttons: u16) -> Pad {
         Pad {
@@ -278,5 +375,22 @@ mod tests {
         assert!(last.rollback_start.is_none());
         assert_eq!(last.latest_confirmed, 156);
         assert_eq!(last.frames_to_advance, 1);
+    }
+
+    #[test]
+    fn fixture_ndjson_predict_miss_matches_join_keys() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/fixtures/predict_miss.ndjson");
+        let raw = fs::read_to_string(path).expect("fixture");
+        let syncs = parse_sync_events(&raw).expect("parse");
+        assert_eq!(syncs.len(), 2);
+        assert!(syncs[0].rb_start.is_none());
+        let miss = &syncs[1];
+        assert_eq!(miss.local, 155);
+        assert_eq!(miss.confirmed, 155);
+        assert_eq!(miss.rb_start, Some(155));
+        assert_eq!(miss.rb_stop, Some(158));
+        assert_eq!(miss.frames_to_advance, Some(4));
+        assert_eq!(miss.checksum, 291);
+        assert!(miss.predicting);
     }
 }
