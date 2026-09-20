@@ -65,13 +65,13 @@ inline void AppendLine(const std::string& line)
 inline void EmitPad(u32 frame, u8 player_idx, u32 buttons)
 {
   AppendLine(fmt::format(
-      R"({{"event":"pad","local":{},"playerIdx":{},"buttons":{}}})", frame, player_idx, buttons));
+      R"({{"type":"pad","local":{},"playerIdx":{},"buttons":{}}})", frame, player_idx, buttons));
 }
 
 // Frame-advance reply (handleFrameAdvanceRequest).
 inline void EmitAdvance(u32 frames_to_advance)
 {
-  AppendLine(fmt::format(R"({{"event":"advance","frames_to_advance":{}}})", frames_to_advance));
+  AppendLine(fmt::format(R"({{"type":"advance","frames_to_advance":{}}})", frames_to_advance));
 }
 
 // Join line after updateSync (optional SyncData + checksum when available).
@@ -79,7 +79,7 @@ inline void EmitSync(u32 local, u32 confirmed, bool predicting, bool has_rollbac
                      u32 rb_stop, s32 checksum, const SyncData* sync)
 {
   std::string line = fmt::format(
-      R"({{"event":"sync","local":{},"confirmed":{},"predicting":{},"checksum":{})", local,
+      R"({{"type":"sync","local":{},"confirmed":{},"predicting":{},"checksum":{})", local,
       confirmed, predicting ? "true" : "false", checksum);
 
   if (has_rollback)
