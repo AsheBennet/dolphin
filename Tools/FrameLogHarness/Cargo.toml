@@ -1,0 +1,8 @@
+[package]
+name = "rbnet-harness"
+version = "0.1.0"
+edition = "2021"
+description = "Mirrors Brawlback CEXIBrawlback predict/resim decision for frame-log spike tests (no ISO)."
+
+[dependencies]
+
