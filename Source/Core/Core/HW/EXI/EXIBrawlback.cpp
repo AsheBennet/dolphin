@@ -2,6 +2,7 @@
 
 #include "EXIBrawlback.h"
 #include "Core/Brawlback/FrameLog.h"
+#include "Core/Brawlback/BridgeLaunchArgs.h"
 #include <Core/Brawlback/include/brawlback-common/ExiStructures.h>
 #include <algorithm>
 #include <chrono>
@@ -743,7 +744,15 @@ void CEXIBrawlback::ProcessGameSettings(GameSettings* opponentGameSettings)
 {
   // merge game settings for all remote/local players, then pass that back to the game
 
-  this->localPlayerIdx = this->isHost ? 0 : 1;
+  if (BridgeLaunchArgs::IsActive())
+  {
+    this->localPlayerIdx = BridgeLaunchArgs::Get().local_player_idx;
+    this->isHost = (this->localPlayerIdx == 0);
+  }
+  else
+  {
+    this->localPlayerIdx = this->isHost ? 0 : 1;
+  }
   // assumes 1v1
   int remotePlayerIdx = this->isHost ? 1 : 0;
 
@@ -1007,6 +1016,73 @@ void CEXIBrawlback::MatchmakingThreadFunc()
   INFO_LOG_FMT(BRAWLBACK, "~~~~~~~~~~~~~~ END MATCHMAKING PHASE 2 THREAD ~~~~~~~~~~~~~~\n");
 }
 
+void CEXIBrawlback::connectViaBridge()
+{
+  const auto& args = BridgeLaunchArgs::Get();
+  this->localPlayerIdx = args.local_player_idx;
+  this->isHost = (args.local_player_idx == 0);
+
+  auto local = BridgeLaunchArgs::LocalEndpoint();
+  if (!local)
+  {
+    ERROR_LOG_FMT(BRAWLBACK, "Bridge connect: missing local endpoint for idx {}\n",
+                  args.local_player_idx);
+    return;
+  }
+
+  INFO_LOG_FMT(BRAWLBACK,
+               "Bridge connect: match_id={} local_idx={} listen {}:{} isHost={}\n",
+               args.match_id, args.local_player_idx, local->host, local->port, this->isHost);
+
+  ENetAddress addr;
+  addr.host = ENET_HOST_ANY;
+  addr.port = local->port;
+  this->server = enet_host_create(&addr, 10, 3, 0, 0);
+  if (this->server == nullptr)
+  {
+    ERROR_LOG_FMT(BRAWLBACK, "Bridge connect: enet_host_create failed on port {}\n", local->port);
+    return;
+  }
+
+  bool connectedToAtLeastOne = false;
+  for (const auto& remote : BridgeLaunchArgs::RemoteEndpoints())
+  {
+    ENetAddress remote_addr;
+    int set_host_res = enet_address_set_host(&remote_addr, remote.host.c_str());
+    if (set_host_res < 0)
+    {
+      WARN_LOG_FMT(BRAWLBACK, "Bridge connect: enet_address_set_host failed for {}\n",
+                   remote.host);
+      continue;
+    }
+    remote_addr.port = remote.port;
+    this->peer = enet_host_connect(this->server, &remote_addr, 3, 0);
+    if (this->peer == nullptr)
+    {
+      WARN_LOG_FMT(BRAWLBACK, "Bridge connect: enet_host_connect failed for {}:{}\n",
+                   remote.host, remote.port);
+      continue;
+    }
+    {
+      using namespace std::chrono_literals;
+      auto PEER_TIMEOUT = 30s;
+      enet_peer_timeout(this->peer, 0, PEER_TIMEOUT.count(), PEER_TIMEOUT.count());
+    }
+    INFO_LOG_FMT(BRAWLBACK, "Bridge connect: connecting to {}:{} (playerId={})\n", remote.host,
+                 remote.port, remote.player_id);
+    connectedToAtLeastOne = true;
+  }
+
+  if (!connectedToAtLeastOne)
+  {
+    ERROR_LOG_FMT(BRAWLBACK, "Bridge connect: no remote peers to connect to\n");
+    return;
+  }
+
+  this->server->mtu = std::min(this->server->mtu, NetPlay::MAX_ENET_MTU);
+  this->netplay_thread = std::thread(&CEXIBrawlback::NetplayThreadFunc, this);
+}
+
 void CEXIBrawlback::connectToOpponent()
 {
   this->isHost = this->matchmaking->IsHost();
@@ -1063,6 +1139,14 @@ void CEXIBrawlback::connectToOpponent()
 void CEXIBrawlback::handleFindMatch(u8* payload)
 {
   // if (!payload) return;
+
+  // Bridge Dock argv: skip Lylat matchmaking; connect using --bb-endpoints.
+  if (BridgeLaunchArgs::IsActive())
+  {
+    INFO_LOG_FMT(BRAWLBACK, "Bridge --bb-* present; bypassing Lylat matchmaking\n");
+    this->connectViaBridge();
+    return;
+  }
 
 #ifdef LOCAL_TESTING
   ENetAddress address;
@@ -1161,6 +1245,20 @@ void CEXIBrawlback::handleStartMatch(u8* payload)
 {
   // if (!payload) return;
   std::memcpy(&gameSettings, payload, sizeof(GameSettings));
+  if (BridgeLaunchArgs::IsActive())
+  {
+    const auto& args = BridgeLaunchArgs::Get();
+    this->localPlayerIdx = args.local_player_idx;
+    // No --bb-host: player 0 owns seed broadcast / host role in existing netplay protocol.
+    this->isHost = (args.local_player_idx == 0);
+    gameSettings.localPlayerIdx = static_cast<bu8>(args.local_player_idx);
+    // GameSettings::randomSeed is bu32; Dock passes int64 — take low 32 bits.
+    gameSettings.randomSeed =
+        static_cast<bu32>(static_cast<u64>(args.seed) & 0xffffffffu);
+    INFO_LOG_FMT(BRAWLBACK,
+                 "Bridge handleStartMatch: match_id={} seed={} (u32={}) local_idx={}\n",
+                 args.match_id, args.seed, gameSettings.randomSeed, args.local_player_idx);
+  }
 }
 
 #include "../../Externals/curl/curl/include/curl/curl.h"

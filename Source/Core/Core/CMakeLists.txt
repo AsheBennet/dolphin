@@ -22,6 +22,8 @@ add_library(core
   Brawlback/Netplay/Matchmaking.h
   Brawlback/Netplay/Netplay.cpp
   Brawlback/Netplay/Netplay.h
+  Brawlback/BridgeLaunchArgs.cpp
+  Brawlback/BridgeLaunchArgs.h
   Brawlback/BrawlbackUtility.cpp
   Brawlback/BrawlbackUtility.h
   Brawlback/FrameLog.h
