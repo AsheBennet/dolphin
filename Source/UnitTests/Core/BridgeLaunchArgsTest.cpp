@@ -40,6 +40,8 @@ TEST(BridgeLaunchArgs, ParseEndpointsRejectsMalformed)
   EXPECT_FALSE(BridgeLaunchArgs::ParseEndpointsJson(R"([{"host":"x","port":1}])", &eps, &err));
   EXPECT_FALSE(
       BridgeLaunchArgs::ParseEndpointsJson(R"([{"playerId":"a","host":"x","port":99999}])", &eps, &err));
+  EXPECT_FALSE(
+      BridgeLaunchArgs::ParseEndpointsJson(R"([{"playerId":"a","host":"x","port":0}])", &eps, &err));
 }
 
 TEST(BridgeLaunchArgs, SetFromCliRoundTrip)
@@ -81,10 +83,57 @@ TEST(BridgeLaunchArgs, SetFromCliRejectsPartialAndBadIdx)
   EXPECT_FALSE(BridgeLaunchArgs::SetFromCli(std::string("m"), std::nullopt, std::string("0"),
                                             std::string("[]"), &err));
   EXPECT_FALSE(BridgeLaunchArgs::IsActive());
+  EXPECT_NE(err.find("--bb-* flags must be provided together"), std::string::npos);
 
   EXPECT_FALSE(BridgeLaunchArgs::SetFromCli(
       std::string("m"), std::string("1"), std::string("5"),
       std::string(R"([{"playerId":"p0","host":"127.0.0.1","port":1}])"), &err));
+  EXPECT_FALSE(BridgeLaunchArgs::IsActive());
+  EXPECT_NE(err.find("out of range"), std::string::npos);
+}
+
+TEST(BridgeLaunchArgs, SetFromCliRejectsBadJson)
+{
+  BridgeLaunchArgs::Clear();
+  std::string err;
+  EXPECT_FALSE(BridgeLaunchArgs::SetFromCli(std::string("m"), std::string("1"), std::string("0"),
+                                            std::string("{"), &err));
+  EXPECT_FALSE(BridgeLaunchArgs::IsActive());
+  EXPECT_NE(err.find("invalid --bb-endpoints"), std::string::npos);
+
+  EXPECT_FALSE(BridgeLaunchArgs::SetFromCli(std::string("m"), std::string("1"), std::string("0"),
+                                            std::string("{}"), &err));
+  EXPECT_FALSE(BridgeLaunchArgs::IsActive());
+}
+
+TEST(BridgeLaunchArgs, SetFromCliRejectsEmptyEndpoints)
+{
+  BridgeLaunchArgs::Clear();
+  std::string err;
+  EXPECT_FALSE(BridgeLaunchArgs::SetFromCli(std::string("m"), std::string("1"), std::string("0"),
+                                            std::string("[]"), &err));
+  EXPECT_FALSE(BridgeLaunchArgs::IsActive());
+  EXPECT_NE(err.find("non-empty"), std::string::npos);
+}
+
+TEST(BridgeLaunchArgs, SetFromCliRejectsMissingPort)
+{
+  BridgeLaunchArgs::Clear();
+  std::string err;
+  EXPECT_FALSE(BridgeLaunchArgs::SetFromCli(
+      std::string("m"), std::string("1"), std::string("0"),
+      std::string(R"([{"playerId":"p0","host":"127.0.0.1","port":0}])"), &err));
+  EXPECT_FALSE(BridgeLaunchArgs::IsActive());
+  EXPECT_NE(err.find("invalid --bb-endpoints"), std::string::npos);
+}
+
+TEST(BridgeLaunchArgs, SetFromCliNoneKeepsInactive)
+{
+  BridgeLaunchArgs::Clear();
+  std::string err;
+  ASSERT_TRUE(BridgeLaunchArgs::SetFromCli(std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+                                           &err))
+      << err;
   EXPECT_FALSE(BridgeLaunchArgs::IsActive());
 }
 

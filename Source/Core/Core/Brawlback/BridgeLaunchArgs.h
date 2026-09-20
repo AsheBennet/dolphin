@@ -32,7 +32,8 @@ struct Args
 bool ParseEndpointsJson(const std::string& json, std::vector<Endpoint>* out,
                         std::string* error = nullptr);
 
-// True after a successful SetFromCli with the --bb-* flags present.
+// True only after SetFromCli succeeds with all four --bb-* flags present.
+// Partial CLI leaves inactive (fail closed).
 bool IsActive();
 const Args& Get();
 void Clear();

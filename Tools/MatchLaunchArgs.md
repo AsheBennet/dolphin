@@ -23,6 +23,22 @@ There is **no** `--bb-host` / `isHost` flag. Listen role:
 - Connect: `CEXIBrawlback::handleFindMatch` bypasses Lylat when `BridgeLaunchArgs::IsActive()`, then `connectViaBridge()`
 - Seed / idx applied in `handleStartMatch` (`GameSettings::randomSeed` takes low 32 bits of the int64)
 
+## Failure modes
+
+All paths fail closed: `IsActive()` stays false (or connect returns without starting Lylat).
+
+| Condition | Behavior |
+|-----------|----------|
+| Partial `--bb-*` (not all four) | `SetFromCli` fails; `ERROR_LOG` in CLI parse; `IsActive()` false → normal Lylat path |
+| Invalid `--bb-endpoints` JSON / non-array / missing fields | `SetFromCli` fails; `ERROR_LOG`; inactive |
+| Empty `--bb-endpoints` `[]` | Rejected; inactive |
+| Endpoint `port` missing / `0` / `>65535` | Rejected as missing or out of range; inactive |
+| `--bb-local-idx` out of range | Rejected; inactive |
+| Invalid `--bb-seed` / `--bb-local-idx` parse | Rejected; inactive |
+| `IsActive()` true but `connectViaBridge` fails (no local endpoint, `enet_host_create`, no usable remotes) | `ERROR_LOG`; **no Lylat fallback**; ENet host destroyed on peer-connect failure |
+
+`IsActive()` is true only after a successful `SetFromCli` with all four flags.
+
 ## Smoke-test example
 
 ```bash
